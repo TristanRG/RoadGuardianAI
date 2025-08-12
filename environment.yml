@@ -10,10 +10,11 @@ dependencies:
   - scikit-learn
   - lightgbm
   - jupyter
+  - ipykernel
   - pip:
       - fastapi
       - uvicorn[standard]
-      - torch        
+      - torch
       - torchvision
       - psycopg2-binary
       - sqlalchemy
@@ -26,7 +27,5 @@ dependencies:
       - pydantic
       - python-dotenv
       - requests
-      - matplotlib 
+      - matplotlib
       - seaborn
-      - os
-
