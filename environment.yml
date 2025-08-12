@@ -1,0 +1,32 @@
+name: roadguardianai
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - numpy
+  - pandas
+  - scikit-learn
+  - lightgbm
+  - jupyter
+  - pip:
+      - fastapi
+      - uvicorn[standard]
+      - torch        
+      - torchvision
+      - psycopg2-binary
+      - sqlalchemy
+      - alembic
+      - celery
+      - redis
+      - prometheus-client
+      - shap
+      - pytest
+      - pydantic
+      - python-dotenv
+      - requests
+      - matplotlib 
+      - seaborn
+      - os
+
