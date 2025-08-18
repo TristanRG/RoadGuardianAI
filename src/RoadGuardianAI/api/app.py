@@ -44,6 +44,28 @@ class RiskRequest(BaseModel):
     top_k: Optional[int] = None
 
 
+def _format_item(sid: str, prob: float, hist_row: dict, rank: Optional[int] = None, ts: Optional[datetime] = None):
+    p = float(prob)
+    item = {
+        "segment_id": sid,
+        "rank": rank,
+        "probability": round(p, 6),
+        "probability_pct": f"{p*100:.2f}%",
+        "lat": None if hist_row.get("LATITUDE") is None else float(hist_row.get("LATITUDE")),
+        "lon": None if hist_row.get("LONGITUDE") is None else float(hist_row.get("LONGITUDE")),
+        "seg_te": round(float(MODEL_SERVER.seg_te_map.get(sid, MODEL_SERVER.global_seg_te)), 6),
+        "recent": {
+            "sev_1h": int(hist_row.get("sev_1h", 0)),
+            "sev_6h": int(hist_row.get("sev_6h", 0)),
+            "tot_6h": int(hist_row.get("tot_6h", 0)),
+        },
+        "has_history": bool(hist_row)
+    }
+    if ts is not None:
+        item["ts"] = ts.isoformat()
+    return item
+
+
 @app.get("/health")
 def health():
     info = {
@@ -56,7 +78,7 @@ def health():
 
 
 @app.post("/predict")
-def predict(req: PredictRequest, authorized: bool = Depends(require_api_key)):
+def predict(req: PredictRequest, authorized: bool = Depends(require_api_key), pretty: bool = True):
     items = req.items
     if len(items) == 0:
         raise HTTPException(status_code=400, detail="No items provided")
@@ -71,13 +93,17 @@ def predict(req: PredictRequest, authorized: bool = Depends(require_api_key)):
         seg_ids = df_feats["segment_id"].tolist()
         X = df_feats.drop(columns=["segment_id"])
         probs = MODEL_SERVER.predict_proba_vect(X)
+        hist_rows = MODEL_SERVER.read_history_for_segments(seg_ids, ts_pred)
         for sid, p in zip(seg_ids, probs):
-            results.append({"segment_id": sid, "ts": ts_pred.isoformat(), "probability": float(p)})
+            if pretty:
+                results.append(_format_item(sid, p, hist_rows.get(sid, {}) or {}, rank=None, ts=ts_pred))
+            else:
+                results.append({"segment_id": sid, "ts": ts_pred.isoformat(), "probability": float(p)})
     return {"count": len(results), "predictions": results}
 
 
 @app.post("/risk")
-def risk_post(req: RiskRequest, authorized: bool = Depends(require_api_key)):
+def risk_post(req: RiskRequest, authorized: bool = Depends(require_api_key), pretty: bool = True):
     ts = req.ts if req.ts is not None else datetime.utcnow().replace(minute=0, second=0, microsecond=0)
     ts = ts.replace(tzinfo=None)
     top_k = req.top_k if req.top_k is not None else CFG["api"].get("default_top_k", 10)
@@ -102,25 +128,20 @@ def risk_post(req: RiskRequest, authorized: bool = Depends(require_api_key)):
     top_seg_ids = [r["segment_id"] for r in top_sorted]
     hist_rows = MODEL_SERVER.read_history_for_segments(top_seg_ids, ts)
     enriched = []
-    for r in top_sorted:
+    for rank_idx, r in enumerate(top_sorted, start=1):
         sid = r["segment_id"]
+        p = r["probability"]
         hrow = hist_rows.get(sid, {}) or {}
-        enriched.append({
-            "segment_id": sid,
-            "probability": r["probability"],
-            "lat": hrow.get("LATITUDE"),
-            "lon": hrow.get("LONGITUDE"),
-            "seg_te": float(MODEL_SERVER.seg_te_map.get(sid, MODEL_SERVER.global_seg_te)),
-            "sev_1h": int(hrow.get("sev_1h", 0)),
-            "sev_6h": int(hrow.get("sev_6h", 0)),
-            "tot_6h": int(hrow.get("tot_6h", 0)),
-        })
+        if pretty:
+            enriched.append(_format_item(sid, p, hrow, rank=rank_idx, ts=ts))
+        else:
+            enriched.append({"segment_id": sid, "probability": p, **hrow})
     MODEL_SERVER.cache.set(cache_key, enriched)
     return {"ts": ts.isoformat(), "top_k": top_k, "results": enriched, "cached": False}
 
 
 @app.get("/risk")
-def risk_get(top_k: Optional[int] = None, ts: Optional[datetime] = None, authorized: bool = Depends(require_api_key)):
+def risk_get(top_k: Optional[int] = None, ts: Optional[datetime] = None, authorized: bool = Depends(require_api_key), pretty: bool = True):
     ts_use = ts if ts is not None else datetime.utcnow().replace(minute=0, second=0, microsecond=0)
     ts_use = ts_use.replace(tzinfo=None)
     top_k_use = top_k if top_k is not None else CFG["api"].get("default_top_k", 10)
@@ -145,19 +166,14 @@ def risk_get(top_k: Optional[int] = None, ts: Optional[datetime] = None, authori
     top_seg_ids = [r["segment_id"] for r in top_sorted]
     hist_rows = MODEL_SERVER.read_history_for_segments(top_seg_ids, ts_use)
     enriched = []
-    for r in top_sorted:
+    for rank_idx, r in enumerate(top_sorted, start=1):
         sid = r["segment_id"]
+        p = r["probability"]
         hrow = hist_rows.get(sid, {}) or {}
-        enriched.append({
-            "segment_id": sid,
-            "probability": r["probability"],
-            "lat": hrow.get("LATITUDE"),
-            "lon": hrow.get("LONGITUDE"),
-            "seg_te": float(MODEL_SERVER.seg_te_map.get(sid, MODEL_SERVER.global_seg_te)),
-            "sev_1h": int(hrow.get("sev_1h", 0)),
-            "sev_6h": int(hrow.get("sev_6h", 0)),
-            "tot_6h": int(hrow.get("tot_6h", 0)),
-        })
+        if pretty:
+            enriched.append(_format_item(sid, p, hrow, rank=rank_idx, ts=ts_use))
+        else:
+            enriched.append({"segment_id": sid, "probability": p, **hrow})
     MODEL_SERVER.cache.set(cache_key, enriched)
     return {"ts": ts_use.isoformat(), "top_k": top_k_use, "results": enriched, "cached": False}
 
@@ -165,4 +181,4 @@ def risk_get(top_k: Optional[int] = None, ts: Optional[datetime] = None, authori
 if __name__ == "__main__":
     import os
     port = int(os.getenv("PORT", "8000"))
-    uvicorn.run("src.api.app:app", host="0.0.0.0", port=port, reload=True)
+    uvicorn.run("src.RoadGuardianAI.api.app:app", host="0.0.0.0", port=port, reload=True)
