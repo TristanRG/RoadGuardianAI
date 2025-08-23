@@ -7,4 +7,4 @@ test_with_hist_shifted_v2.parquet
 train_with_hist_shifted_v2.parquet
 .env
 __pycache__
-db
+db.py 
