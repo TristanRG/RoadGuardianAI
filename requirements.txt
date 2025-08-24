@@ -10,3 +10,4 @@ pyarrow
 pytest
 sqlalchemy 
 psycopg2-binary
+prometheus-client

@@ -7,6 +7,7 @@ import time
 import pandas as pd
 import numpy as np
 from ..api.model_serving import load_config, ModelServer
+from ..api.metrics import metrics_response
 
 
 class BatchPredictor:

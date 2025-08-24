@@ -1,13 +1,15 @@
 from fastapi import FastAPI, HTTPException, Depends, Header, Query
-from pydantic import BaseModel, Field, conint
+from pydantic import BaseModel, Field
 from typing import List, Optional
 from datetime import datetime
 from pathlib import Path
 import uvicorn
 import os
-from pydantic import conint
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response as StarletteResponse
 
 from .model_serving import load_config, ModelServer
+from . import metrics
 
 CFG = load_config("config/config.yml")
 MODEL_SERVER = ModelServer(CFG)
@@ -22,7 +24,6 @@ API_KEY = os.getenv("API_KEY")
 
 
 def require_api_key(x_api_key: Optional[str] = Header(None)):
-    """Validate API key if configured."""
     if API_KEY is None:
         return True
     if x_api_key is None:
@@ -34,9 +35,7 @@ def require_api_key(x_api_key: Optional[str] = Header(None)):
 
 class PredictItem(BaseModel):
     segment_id: str = Field(..., description="Unique road segment ID")
-    ts: Optional[datetime] = Field(
-        None, description="Prediction timestamp (UTC). Defaults to current UTC hour"
-    )
+    ts: Optional[datetime] = Field(None, description="Prediction timestamp (UTC). Defaults to current UTC hour")
 
 
 class PredictRequest(BaseModel):
@@ -45,17 +44,10 @@ class PredictRequest(BaseModel):
 
 class RiskRequest(BaseModel):
     ts: Optional[datetime] = Field(None, description="Timestamp to predict risk for")
-    top_k: Optional[int] = Query(
-    None, gt=0, description="Number of top risky segments"
-)
+    top_k: Optional[int] = Query(None, gt=0, description="Number of top risky segments")
 
-def _format_item(
-    sid: str,
-    prob: float,
-    hist_row: dict,
-    rank: Optional[int] = None,
-    ts: Optional[datetime] = None,
-):
+
+def _format_item(sid: str, prob: float, hist_row: dict, rank: Optional[int] = None, ts: Optional[datetime] = None):
     p = float(prob)
     item = {
         "segment_id": sid,
@@ -64,9 +56,7 @@ def _format_item(
         "probability_pct": f"{p*100:.2f}%",
         "lat": float(hist_row.get("LATITUDE")) if hist_row.get("LATITUDE") else None,
         "lon": float(hist_row.get("LONGITUDE")) if hist_row.get("LONGITUDE") else None,
-        "seg_te": round(
-            float(MODEL_SERVER.seg_te_map.get(sid, MODEL_SERVER.global_seg_te)), 6
-        ),
+        "seg_te": round(float(MODEL_SERVER.seg_te_map.get(sid, MODEL_SERVER.global_seg_te)), 6),
         "recent": {
             "sev_1h": int(hist_row.get("sev_1h", 0)),
             "sev_6h": int(hist_row.get("sev_6h", 0)),
@@ -78,40 +68,32 @@ def _format_item(
         item["ts"] = ts.isoformat()
     return item
 
+
 @app.get("/health")
 def health():
-    """Health check for model + history data."""
     info = {
         "model_loaded": MODEL_SERVER.model is not None,
         "model_type": str(type(MODEL_SERVER.model)),
         "n_seg_te_keys": len(MODEL_SERVER.seg_te_map),
         "history_dir_exists": Path(MODEL_SERVER.history_dir).exists(),
     }
+    metrics.MODEL_LOADED.set(1.0 if MODEL_SERVER.model is not None else 0.0)
     return {"status": "ok", "info": info}
 
 
 @app.post("/predict")
-def predict(
-    req: PredictRequest,
-    authorized: bool = Depends(require_api_key),
-    pretty: bool = True,
-):
-    """Predict risk probability for given road segments."""
+def predict(req: PredictRequest, authorized: bool = Depends(require_api_key), pretty: bool = True):
     if len(req.items) == 0:
         raise HTTPException(status_code=400, detail="No items provided.")
 
     results = []
     grouped = {}
-
     for it in req.items:
-        ts_here = (
-            it.ts
-            if it.ts is not None
-            else datetime.utcnow().replace(minute=0, second=0, microsecond=0)
-        )
+        ts_here = it.ts if it.ts is not None else datetime.utcnow().replace(minute=0, second=0, microsecond=0)
         ts_here = ts_here.replace(tzinfo=None)
         grouped.setdefault(ts_here, []).append(it.segment_id)
 
+    total_pred = 0
     for ts_pred, segs in grouped.items():
         df_feats = MODEL_SERVER.assemble_features_batch(segs, ts_pred)
         seg_ids = df_feats["segment_id"].tolist()
@@ -119,31 +101,19 @@ def predict(
         probs = MODEL_SERVER.predict_proba_vect(X)
         hist_rows = MODEL_SERVER.read_history_for_segments(seg_ids, ts_pred)
         for sid, p in zip(seg_ids, probs):
+            total_pred += 1
             if pretty:
-                results.append(
-                    _format_item(sid, p, hist_rows.get(sid, {}) or {}, ts=ts_pred)
-                )
+                results.append(_format_item(sid, p, hist_rows.get(sid, {}) or {}, ts=ts_pred))
             else:
-                results.append(
-                    {"segment_id": sid, "ts": ts_pred.isoformat(), "probability": float(p)}
-                )
+                results.append({"segment_id": sid, "ts": ts_pred.isoformat(), "probability": float(p)})
 
+    metrics.PREDICTIONS_TOTAL.inc(total_pred)
     return {"count": len(results), "predictions": results}
 
 
 @app.post("/risk")
-def risk_post(
-    req: RiskRequest,
-    authorized: bool = Depends(require_api_key),
-    pretty: bool = True,
-):
-    """Get top-k risky segments at a given time (POST)."""
-    ts = (
-        req.ts
-        if req.ts is not None
-        else datetime.utcnow().replace(minute=0, second=0, microsecond=0)
-    ).replace(tzinfo=None)
-
+def risk_post(req: RiskRequest, authorized: bool = Depends(require_api_key), pretty: bool = True):
+    ts = (req.ts if req.ts is not None else datetime.utcnow().replace(minute=0, second=0, microsecond=0)).replace(tzinfo=None)
     top_k = req.top_k or CFG["api"].get("default_top_k", 10)
     cache_key = f"risk:{ts.isoformat()}:{top_k}"
     cached = MODEL_SERVER.cache.get(cache_key)
@@ -168,34 +138,26 @@ def risk_post(
     top_seg_ids = [r["segment_id"] for r in top_sorted]
     hist_rows = MODEL_SERVER.read_history_for_segments(top_seg_ids, ts)
 
-    enriched = [
-        _format_item(r["segment_id"], r["probability"], hist_rows.get(r["segment_id"], {}), rank_idx, ts)
-        if pretty
-        else {"segment_id": r["segment_id"], "probability": r["probability"], **hist_rows.get(r["segment_id"], {})}
-        for rank_idx, r in enumerate(top_sorted, start=1)
-    ]
+    enriched = []
+    for rank_idx, r in enumerate(top_sorted, start=1):
+        sid = r["segment_id"]
+        p = r["probability"]
+        hrow = hist_rows.get(sid, {}) or {}
+        if pretty:
+            enriched.append(_format_item(sid, p, hrow, rank=rank_idx, ts=ts))
+        else:
+            enriched.append({"segment_id": sid, "probability": p, **hrow})
 
-    MODEL_SERVER.cache.set(cache_key, enriched)
+    metrics.PREDICTIONS_TOTAL.inc(len(enriched))
     return {"ts": ts.isoformat(), "top_k": top_k, "results": enriched, "cached": False}
 
 
 @app.get("/risk")
-def risk_get(
-    top_k: Optional[int] = Query(
-        None, gt=0, description="Number of top risky segments"
-    ),
-    ts: Optional[datetime] = Query(
-        None, description="Timestamp to predict for"
-    ),
-    authorized: bool = Depends(require_api_key),
-    pretty: bool = True,
-):
-    """Get top-k risky segments at a given time (GET)."""
-    ts_use = (
-        ts if ts is not None
-        else datetime.utcnow().replace(minute=0, second=0, microsecond=0)
-    ).replace(tzinfo=None)
-
+def risk_get(top_k: Optional[int] = Query(None, gt=0, description="Number of top risky segments"),
+             ts: Optional[datetime] = Query(None, description="Timestamp to predict for"),
+             authorized: bool = Depends(require_api_key),
+             pretty: bool = True):
+    ts_use = (ts if ts is not None else datetime.utcnow().replace(minute=0, second=0, microsecond=0)).replace(tzinfo=None)
     top_k_use = top_k or CFG["api"].get("default_top_k", 10)
     cache_key = f"risk:{ts_use.isoformat()}:{top_k_use}"
     cached = MODEL_SERVER.cache.get(cache_key)
@@ -220,15 +182,39 @@ def risk_get(
     top_seg_ids = [r["segment_id"] for r in top_sorted]
     hist_rows = MODEL_SERVER.read_history_for_segments(top_seg_ids, ts_use)
 
-    enriched = [
-        _format_item(r["segment_id"], r["probability"], hist_rows.get(r["segment_id"], {}), rank_idx, ts_use)
-        if pretty
-        else {"segment_id": r["segment_id"], "probability": r["probability"], **hist_rows.get(r["segment_id"], {})}
-        for rank_idx, r in enumerate(top_sorted, start=1)
-    ]
+    enriched = []
+    for rank_idx, r in enumerate(top_sorted, start=1):
+        sid = r["segment_id"]
+        p = r["probability"]
+        hrow = hist_rows.get(sid, {}) or {}
+        if pretty:
+            enriched.append(_format_item(sid, p, hrow, rank=rank_idx, ts=ts_use))
+        else:
+            enriched.append({"segment_id": sid, "probability": p, **hrow})
 
-    MODEL_SERVER.cache.set(cache_key, enriched)
+    metrics.PREDICTIONS_TOTAL.inc(len(enriched))
     return {"ts": ts_use.isoformat(), "top_k": top_k_use, "results": enriched, "cached": False}
+
+
+class PrometheusMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        import time
+        start = time.time()
+        response = await call_next(request)
+        elapsed = time.time() - start
+        method = request.method
+        endpoint = request.url.path
+        status = str(response.status_code)
+        metrics.HTTP_REQUESTS_TOTAL.labels(method=method, endpoint=endpoint, status_code=status).inc()
+        metrics.HTTP_REQUEST_LATENCY_SECONDS.labels(method=method, endpoint=endpoint).observe(elapsed)
+        return response
+
+app.add_middleware(PrometheusMiddleware)
+
+
+@app.get("/metrics")
+def metrics_endpoint():
+    return metrics.metrics_response()
 
 
 if __name__ == "__main__":
