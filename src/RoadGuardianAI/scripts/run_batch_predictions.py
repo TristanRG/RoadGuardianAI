@@ -11,7 +11,12 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from RoadGuardianAI.batch.runner import BatchPredictor
 import pandas as pd
-from RoadGuardianAI.utils.db import save_predictions
+
+try:
+    from RoadGuardianAI.utils.db import save_predictions
+    _HAS_DB = True
+except Exception:
+    _HAS_DB = False
 
 def parse_args():
     p = argparse.ArgumentParser(description="Run batch predictions for all segments")
@@ -47,13 +52,16 @@ def main():
         traceback.print_exc()
         raise
 
-    try:
-        n = save_predictions(df)
-        print(f"Saved {n} rows to DB.")
-    except Exception as e:
-        print("Failed to save predictions to DB:", e)
-        traceback.print_exc()
-        raise
+    if _HAS_DB:
+        try:
+            n = save_predictions(df)
+            print(f"Saved {n} rows to DB.")
+        except Exception as e:
+            print("Failed to save predictions to DB:", e)
+            traceback.print_exc()
+            raise
+    else:
+        print("DB save skipped (save_predictions not available in utils.db).")
 
 if __name__ == "__main__":
     main()

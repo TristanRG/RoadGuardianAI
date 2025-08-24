@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, Header, Query
+from fastapi import FastAPI, HTTPException, Depends, Header, Query, Request
 from pydantic import BaseModel, Field
 from typing import List, Optional
 from datetime import datetime
@@ -94,20 +94,27 @@ def predict(req: PredictRequest, authorized: bool = Depends(require_api_key), pr
         grouped.setdefault(ts_here, []).append(it.segment_id)
 
     total_pred = 0
-    for ts_pred, segs in grouped.items():
-        df_feats = MODEL_SERVER.assemble_features_batch(segs, ts_pred)
-        seg_ids = df_feats["segment_id"].tolist()
-        X = df_feats.drop(columns=["segment_id"])
-        probs = MODEL_SERVER.predict_proba_vect(X)
-        hist_rows = MODEL_SERVER.read_history_for_segments(seg_ids, ts_pred)
-        for sid, p in zip(seg_ids, probs):
-            total_pred += 1
-            if pretty:
-                results.append(_format_item(sid, p, hist_rows.get(sid, {}) or {}, ts=ts_pred))
-            else:
-                results.append({"segment_id": sid, "ts": ts_pred.isoformat(), "probability": float(p)})
+    try:
+        for ts_pred, segs in grouped.items():
+            df_feats = MODEL_SERVER.assemble_features_batch(segs, ts_pred)
+            seg_ids = df_feats["segment_id"].tolist()
+            X = df_feats.drop(columns=["segment_id"])
+            probs = MODEL_SERVER.predict_proba_vect(X)
+            hist_rows = MODEL_SERVER.read_history_for_segments(seg_ids, ts_pred)
+            for sid, p in zip(seg_ids, probs):
+                total_pred += 1
+                if pretty:
+                    results.append(_format_item(sid, p, hist_rows.get(sid, {}) or {}, ts=ts_pred))
+                else:
+                    results.append({"segment_id": sid, "ts": ts_pred.isoformat(), "probability": float(p)})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Prediction failed: {e}")
 
-    metrics.PREDICTIONS_TOTAL.inc(total_pred)
+    try:
+        metrics.PREDICTIONS_TOTAL.inc(total_pred)
+    except Exception:
+        pass
+
     return {"count": len(results), "predictions": results}
 
 
@@ -125,14 +132,17 @@ def risk_post(req: RiskRequest, authorized: bool = Depends(require_api_key), pre
         raise HTTPException(status_code=500, detail="No segment history files found.")
 
     all_results = []
-    for i in range(0, len(segs), MODEL_SERVER.batch_size):
-        batch = segs[i : i + MODEL_SERVER.batch_size]
-        df_feats = MODEL_SERVER.assemble_features_batch(batch, ts)
-        seg_ids = df_feats["segment_id"].tolist()
-        X = df_feats.drop(columns=["segment_id"])
-        probs = MODEL_SERVER.predict_proba_vect(X)
-        for sid, p in zip(seg_ids, probs):
-            all_results.append({"segment_id": sid, "probability": float(p)})
+    try:
+        for i in range(0, len(segs), MODEL_SERVER.batch_size):
+            batch = segs[i : i + MODEL_SERVER.batch_size]
+            df_feats = MODEL_SERVER.assemble_features_batch(batch, ts)
+            seg_ids = df_feats["segment_id"].tolist()
+            X = df_feats.drop(columns=["segment_id"])
+            probs = MODEL_SERVER.predict_proba_vect(X)
+            for sid, p in zip(seg_ids, probs):
+                all_results.append({"segment_id": sid, "probability": float(p)})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Risk computation failed: {e}")
 
     top_sorted = sorted(all_results, key=lambda x: x["probability"], reverse=True)[:top_k]
     top_seg_ids = [r["segment_id"] for r in top_sorted]
@@ -148,7 +158,12 @@ def risk_post(req: RiskRequest, authorized: bool = Depends(require_api_key), pre
         else:
             enriched.append({"segment_id": sid, "probability": p, **hrow})
 
-    metrics.PREDICTIONS_TOTAL.inc(len(enriched))
+    try:
+        metrics.PREDICTIONS_TOTAL.inc(len(enriched))
+    except Exception:
+        pass
+
+    MODEL_SERVER.cache.set(cache_key, enriched)
     return {"ts": ts.isoformat(), "top_k": top_k, "results": enriched, "cached": False}
 
 
@@ -169,14 +184,17 @@ def risk_get(top_k: Optional[int] = Query(None, gt=0, description="Number of top
         raise HTTPException(status_code=500, detail="No segment history files found.")
 
     all_results = []
-    for i in range(0, len(segs), MODEL_SERVER.batch_size):
-        batch = segs[i : i + MODEL_SERVER.batch_size]
-        df_feats = MODEL_SERVER.assemble_features_batch(batch, ts_use)
-        seg_ids = df_feats["segment_id"].tolist()
-        X = df_feats.drop(columns=["segment_id"])
-        probs = MODEL_SERVER.predict_proba_vect(X)
-        for sid, p in zip(seg_ids, probs):
-            all_results.append({"segment_id": sid, "probability": float(p)})
+    try:
+        for i in range(0, len(segs), MODEL_SERVER.batch_size):
+            batch = segs[i : i + MODEL_SERVER.batch_size]
+            df_feats = MODEL_SERVER.assemble_features_batch(batch, ts_use)
+            seg_ids = df_feats["segment_id"].tolist()
+            X = df_feats.drop(columns=["segment_id"])
+            probs = MODEL_SERVER.predict_proba_vect(X)
+            for sid, p in zip(seg_ids, probs):
+                all_results.append({"segment_id": sid, "probability": float(p)})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Risk computation failed: {e}")
 
     top_sorted = sorted(all_results, key=lambda x: x["probability"], reverse=True)[:top_k_use]
     top_seg_ids = [r["segment_id"] for r in top_sorted]
@@ -192,25 +210,45 @@ def risk_get(top_k: Optional[int] = Query(None, gt=0, description="Number of top
         else:
             enriched.append({"segment_id": sid, "probability": p, **hrow})
 
-    metrics.PREDICTIONS_TOTAL.inc(len(enriched))
+    try:
+        metrics.PREDICTIONS_TOTAL.inc(len(enriched))
+    except Exception:
+        pass
+
+    MODEL_SERVER.cache.set(cache_key, enriched)
     return {"ts": ts_use.isoformat(), "top_k": top_k_use, "results": enriched, "cached": False}
 
 
+def _sanitize_label(value: Optional[str], max_len: int = 120) -> str:
+    if value is None:
+        return ""
+    s = str(value)
+    if len(s) > max_len:
+        return s[:max_len]
+    return s
+
 class PrometheusMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request, call_next):
+    async def dispatch(self, request: Request, call_next):
         import time
         start = time.time()
-        response = await call_next(request)
-        elapsed = time.time() - start
-        method = request.method
-        endpoint = request.url.path
-        status = str(response.status_code)
-        metrics.HTTP_REQUESTS_TOTAL.labels(method=method, endpoint=endpoint, status_code=status).inc()
-        metrics.HTTP_REQUEST_LATENCY_SECONDS.labels(method=method, endpoint=endpoint).observe(elapsed)
+        try:
+            response = await call_next(request)
+            status = str(response.status_code)
+        except Exception:
+            status = "500"
+            raise
+        finally:
+            elapsed = time.time() - start
+            method = request.method
+            endpoint = _sanitize_label(request.url.path)
+            try:
+                metrics.HTTP_REQUESTS_TOTAL.labels(method=method, endpoint=endpoint, status_code=status).inc()
+                metrics.HTTP_REQUEST_LATENCY_SECONDS.labels(method=method, endpoint=endpoint).observe(elapsed)
+            except Exception:
+                pass
         return response
 
 app.add_middleware(PrometheusMiddleware)
-
 
 @app.get("/metrics")
 def metrics_endpoint():

@@ -1,6 +1,6 @@
-from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
-from prometheus_client import CollectorRegistry
+from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST, REGISTRY
 from starlette.responses import Response
+from typing import Any
 
 HTTP_REQUESTS_TOTAL = Counter(
     "rg_http_requests_total",
@@ -23,5 +23,5 @@ BATCH_PREDICTIONS_TOTAL = Counter(
 MODEL_LOADED = Gauge("rg_model_loaded", "Is model loaded (1=yes,0=no)")
 
 def metrics_response() -> Response:
-    payload = generate_latest()  
+    payload = generate_latest(REGISTRY)
     return Response(content=payload, media_type=CONTENT_TYPE_LATEST)

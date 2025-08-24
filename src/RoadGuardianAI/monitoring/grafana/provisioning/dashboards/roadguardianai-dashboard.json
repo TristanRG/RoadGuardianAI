@@ -1,0 +1,124 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "gnetId": null,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "type": "row",
+      "title": "Overview",
+      "gridPos": {"h":1,"w":24,"x":0,"y":0},
+      "collapsed": false,
+      "panels": [],
+      "id": 1
+    },
+    {
+      "type": "stat",
+      "title": "Model Loaded",
+      "gridPos": {"h":3,"w":4,"x":0,"y":1},
+      "id": 2,
+      "targets": [
+        {
+          "expr": "rg_model_loaded",
+          "refId": "A"
+        }
+      ],
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "center" }
+    },
+    {
+      "type": "timeseries",
+      "title": "Requests/sec by endpoint (5m rate)",
+      "gridPos": {"h":8,"w":12,"x":4,"y":1},
+      "id": 3,
+      "targets": [
+        {
+          "expr": "sum by (endpoint) (rate(rg_http_requests_total[5m]))",
+          "legendFormat": "{{endpoint}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Total requests (all endpoints)",
+      "gridPos": {"h":4,"w":6,"x":16,"y":1},
+      "id": 4,
+      "targets": [
+        {
+          "expr": "sum(rate(rg_http_requests_total[5m]))",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "95th latency per endpoint (5m)",
+      "gridPos": {"h":8,"w":12,"x":0,"y":9},
+      "id": 5,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, endpoint) (rate(rg_http_request_latency_seconds_bucket[5m])))",
+          "legendFormat": "{{endpoint}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Avg latency per endpoint (5m)",
+      "gridPos": {"h":4,"w":12,"x":12,"y":9},
+      "id": 6,
+      "targets": [
+        {
+          "expr": "sum by (endpoint) (rate(rg_http_request_latency_seconds_sum[5m])) / sum by (endpoint) (rate(rg_http_request_latency_seconds_count[5m]))",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Predictions/sec (5m)",
+      "gridPos": {"h":4,"w":12,"x":0,"y":17},
+      "id": 7,
+      "targets": [
+        {
+          "expr": "sum(rate(rg_predictions_total[5m]))",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Batch runs (rate /1h) & Batch predictions produced",
+      "gridPos": {"h":4,"w":12,"x":12,"y":17},
+      "id": 8,
+      "targets": [
+        { "expr": "rate(rg_batch_runs_total[1h])", "legendFormat": "batch_runs_per_hour", "refId": "A" },
+        { "expr": "rate(rg_batch_predictions_total[1h])", "legendFormat": "batch_predictions_per_hour", "refId": "B" }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Latest metrics snapshot",
+      "gridPos": {"h":4,"w":24,"x":0,"y":21},
+      "id": 9,
+      "targets": [
+        { "expr": "rg_model_loaded", "refId": "A" },
+        { "expr": "sum by (endpoint) (rate(rg_http_requests_total[5m]))", "refId": "B" },
+        { "expr": "sum(rate(rg_predictions_total[5m]))", "refId": "C" }
+      ]
+    }
+  ],
+  "schemaVersion": 33,
+  "style": "dark",
+  "tags": ["roadguardian"],
+  "templating": {"list": []},
+  "time": {"from": "now-1h", "to": "now"},
+  "timepicker": {},
+  "title": "RoadGuardian - API Overview",
+  "version": 1
+}
