@@ -8,3 +8,4 @@ train_with_hist_shifted_v2.parquet
 .env
 __pycache__
 db.py 
+commands.txt
