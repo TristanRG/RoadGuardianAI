@@ -1,0 +1,29 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": "roadguardian-overview",
+    "title": "RoadGuardian Overview",
+    "schemaVersion": 36,
+    "version": 0,
+    "refresh": "10s",
+    "panels": [
+      {
+        "type": "timeseries",
+        "title": "Request rate (req/s)",
+        "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 },
+        "id": 1,
+        "targets": [
+          {
+            "expr": "sum by (endpoint, method) (rate(rg_http_requests_total[5m]))",
+            "refId": "A",
+            "legendFormat": "{{endpoint}} {{method}}"
+          }
+        ],
+        "datasource": { "type": "prometheus", "uid": "" }
+      }
+    ],
+    "templating": { "list": [] },
+    "time": { "from": "now-1h", "to": "now" }
+  },
+  "overwrite": true
+}
