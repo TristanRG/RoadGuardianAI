@@ -1,7 +1,7 @@
 model:
-  model_path: "C:/Users/trist/Desktop/RoadGuardianAI/models/lgb_baseline_model.txt"
-  joblib_path: "C:/Users/trist/Desktop/RoadGuardianAI/models/lgb_baseline_model.joblib"
-  encoders_path: "C:/Users/trist/Desktop/RoadGuardianAI/models/label_encoders.joblib"
+  model_path: /app/models/lgb_baseline_model.txt
+  joblib_path: /app/models/lgb_baseline_model.joblib
+  encoders_path: /app/models/label_encoders.joblib
   expected_features:
     - hour_sin
     - hour_cos
