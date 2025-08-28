@@ -1,12 +1,12 @@
 # RoadGuardianAI
 Risk prediction API for road segments LightGBM baseline, batch predictions, Postgres persistence, Prometheus metrics and Grafana dashboards.
 
-LightGBM baseline model trained on the accident dataset  
-FastAPI server exposing /predict, /risk, /health and /metrics  
-Batch prediction runner that saves outputs to Parquet and Postgres  
-Prometheus instrumentation and Grafana dashboards for monitoring  
-Unit tests (pytest) for the API and batch pipeline  
-SHAP analyses (dependence plots and beeswarm) used for interpretability  
+- LightGBM baseline model trained on the accident dataset  
+- FastAPI server exposing /predict, /risk, /health and /metrics  
+- Batch prediction runner that saves outputs to Parquet and Postgres  
+- Prometheus instrumentation and Grafana dashboards for monitoring  
+- Unit tests (pytest) for the API and batch pipeline  
+- SHAP analyses (dependence plots and beeswarm) used for interpretability  
 
 # Local Development
 
@@ -30,13 +30,13 @@ docker-compose up -d --build
 
 # API Endpoints
 
-GET /health  
+- GET /health  
 Returns model + data availability status  
-POST /predict  
+- POST /predict  
 Predict risk for one or more segments  
-GET & POST /risk  
+- GET & POST /risk  
 Returns top-K risky segments for a time window  
-GET /metrics  
+- GET /metrics  
 Prometheus scraped endpoint with metrics  
 
 # Prometheus & Grafana
@@ -48,6 +48,7 @@ App exposes /metrics endpoint. Prometheus scrapes that endpoint and Grafana uses
 # SHAP
 
 Anylyses that show feature impact and conditional relationships based on the model training
+
 ![SHAP Dependence Hour](figures/shap_dependence_hour_aligned.png) 
 
 ![SHAP Dependence Segment](figures/shap_dependence_seg_te.png)  
